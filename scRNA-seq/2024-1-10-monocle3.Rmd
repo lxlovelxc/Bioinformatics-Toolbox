@@ -1,0 +1,162 @@
+---
+title: "monocle3"
+author: "Xi Luo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+# library(devtools)
+# BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+#                        'limma', 'lme4', 'S4Vectors', 'SingleCellExperiment',
+#                        'SummarizedExperiment', 'batchelor', 'HDF5Array',
+#                        'terra', 'ggrastr'))
+# devtools::install_github('cole-trapnell-lab/monocle3')
+```
+
+```{r}
+#==========error name 1 =================
+#‘spdep’, ‘terra’ are not available for package ‘monocle3’ > sf > units >
+# Configuration failed because libudunits2.so was not found. Try installing:
+#     * deb: libudunits2-dev (Debian, Ubuntu, ...)
+
+# =========solve by ==================
+# sudo apt install libudunits2-dev^C
+
+#===========error name 2 ================
+# configure: error: gdal-config not found or not executable.
+# ERROR: configuration failed for package ‘sf’
+
+# ==========solve by =================
+# sudo apt-get install libgdal-dev libproj-dev gdal-bin -y
+
+```
+
+
+```{r}
+library(monocle3)
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(Matrix)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+data <- readRDS("2024-5-13-experiment1-4-after-harmony-mt50-feature200.Rdata")
+expression_matrix <- GetAssayData(data,assay = "RNA",slot = "counts")
+cell_metadata <- data@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(expression_matrix))
+rownames(gene_annotation) <- rownames(expression_matrix)
+  
+cds <- new_cell_data_set(expression_matrix,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+```
+
+```{r}
+## Step 1: Normalize and pre-process the data
+cds <- preprocess_cds(cds, num_dim = 100)
+```
+
+```{r}
+cds <- align_cds(cds, alignment_group = "batch")
+```
+
+```{r}
+## Step 3: Reduce the dimensions using UMAP
+cds <- reduce_dimension(cds)
+
+## Step 4: Cluster the cells
+cds <- cluster_cells(cds)
+```
+
+```{r}
+## Step 5: Learn a graph
+cds <- learn_graph(cds)
+
+plot_cells(cds,color_cells_by = "label",label_groups_by_cluster = TRUE,
+           label_leaves = TRUE,label_branch_points = TRUE)
+
+## Step 6: Order cells
+cds <- order_cells(cds)
+
+plot_cells(cds)
+```
+
+```{r}
+
+young <- subset(data , label == "young")
+
+expression_matrix <- GetAssayData(young,assay = "RNA",slot = "counts")
+
+cell_metadata <- young@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(expression_matrix))
+rownames(gene_annotation) <- rownames(expression_matrix)
+  
+cds <- new_cell_data_set(expression_matrix,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+## Step 1: Normalize and pre-process the data
+cds <- preprocess_cds(cds, num_dim = 50)
+cds <- reduce_dimension(cds,reduction_method = "tSNE")
+plot_cells(cds,reduction_method = "tSNE",color_cells_by = "seurat_clusters")
+cds <- reduce_dimension(cds,reduction_method = "UMAP")
+plot_cells(cds,reduction_method = "UMAP",color_cells_by = "seurat_clusters")
+
+cds <- cluster_cells(cds)
+plot_cells(cds,color_cells_by = "partition")
+
+cds <- learn_graph(cds)
+plot_cells(cds,
+           color_cells_by = "seurat_clusters",
+           label_groups_by_cluster=TRUE,
+           label_leaves=TRUE,
+           label_branch_points=TRUE)
+
+cds <- order_cells(cds)
+plot_cells(cds,color_cells_by = "pseudotime",label_cell_groups = TRUE,label_leaves = TRUE,
+           label_branch_points = TRUE)
+
+pseudotime <- pseudotime(cds,reduction_method = "UMAP")
+pseudotime <- pseudotime[rownames(young@meta.data)]
+young$pseudotime <- pseudotime
+FeaturePlot(young,reduction = "umap",features = "pseudotime")
+
+DimPlot(young,reduction = "umap")
+
+```
+```{r}
+old <- subset(data , label == "old")
+DimPlot(old,reduction = "umap")
+```
+
+
+```{r}
+marker_test_res <- top_markers(cds, group_cells_by="seurat_clusters", 
+                               reference_cells=1000, cores=8)
+
+top_specific_markers <- marker_test_res %>%
+                            filter(fraction_expressing >= 0.10) %>%
+                            group_by(cell_group) %>%
+                            top_n(1, pseudo_R2)
+
+top_specific_marker_ids <- unique(top_specific_markers %>% pull(gene_id))
+
+plot_genes_by_group(cds,
+                    top_specific_marker_ids,
+                    group_cells_by="seurat_clusters",
+                    ordering_type="maximal_on_diag",
+                    max.size=20)
+
+
+```
+
+

@@ -1,0 +1,557 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(Polychrome)
+library(SingleCellExperiment)
+library(tidyverse)
+library(cowplot)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+#setwd("/home/xi/Desktop")
+
+data_0112 <- readRDS("cells_0112.Rdata")
+data_1207 <- readRDS("cells_1207.Rdata")
+data_1101 <- readRDS("cells_1101.Rdata")
+
+
+all <- merge(data_0112, y = c(data_1207,data_1101))
+all
+all <- NormalizeData(all, normalization.method = "LogNormalize", scale.factor = 10000)
+all <- FindVariableFeatures(all, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(all)
+all <- ScaleData(all, features = all.genes)
+all <- RunPCA(all,features = VariableFeatures(object = all))
+#Investigate the intrinsic dimensionality of the data using an elbow plot:
+ElbowPlot(all)
+VizDimLoadings(all,dims = 1:2,reduction = "pca")
+DimHeatmap(all,dims = 1:5,balanced = TRUE)
+all <- FindNeighbors(all, dims = 1:10)
+all <- FindClusters(all, resolution = 0.1)
+DimPlot(all,reduction = "pca")
+all <- RunUMAP(all, dims = 1:10)
+DimPlot(all, reduction = "umap",pt.size =1,label = TRUE)
+
+table(all$embryo,all$label)
+all$CellCluster <- Idents(all)
+e11 <-subset(all,subset = embryo == "1-1")
+e12 <- subset(all,subset = embryo == "1-2")
+e13 <- subset(all,subset = embryo == "1-3")
+e14 <- subset(all,subset = embryo == "1-4")
+e16 <- subset(all,subset = embryo == "1-6") 
+e21 <- subset(all,subset = embryo == "2-1")
+e22 <- subset(all,subset = embryo == "2-2")
+e23 <- subset(all,subset = embryo == "2-3")
+e24 <- subset(all,subset = embryo == "2-4")
+e25 <- subset(all,subset = embryo == "2-5")
+e26 <- subset(all,subset = embryo == "2-6")
+e31 <- subset(all,subset = embryo == "3-1")
+e32 <- subset(all,subset = embryo == "3-2")
+e33 <- subset(all,subset = embryo == "3-3")
+e35 <- subset(all,subset = embryo == "3-5")
+e36 <- subset(all,subset = embryo == "3-6")
+e37 <- subset(all,subset = embryo == "3-7")
+
+
+e11_epi <- subset(e11,subset = CellCluster =="3")
+e12_epi <- subset(e12,subset = CellCluster =="3")
+e14_epi <- subset(e14,subset = CellCluster =="3")
+e16_epi <- subset(e16,subset = CellCluster =="3")
+e22_epi <- subset(e22,subset = CellCluster =="3")
+e24_epi <- subset(e24,subset = CellCluster =="3")
+e26_epi <- subset(e26,subset = CellCluster =="3")
+e32_epi <- subset(e32,subset = CellCluster =="3")
+e33_epi <- subset(e33,subset = CellCluster =="3")
+e35_epi <- subset(e35,subset = CellCluster =="3")
+e37_epi <- subset(e37,subset = CellCluster =="3")
+
+
+#1-1 1-2 1-3 2-1 2-2 2-3 3-1 3-2 3-3       1-4 1-6 2-4 2-5 2-6 3-5 3-6 3-7 
+data <- cbind(as.data.frame(rowSums(e11_epi@assays$RNA@counts)),as.data.frame(rowSums(e12_epi@assays$RNA@counts)),as.data.frame(rowSums(e22_epi@assays$RNA@counts)),as.data.frame(rowSums(e32_epi@assays$RNA@counts)),as.data.frame(rowSums(e33_epi@assays$RNA@counts)),as.data.frame(rowSums(e14_epi@assays$RNA@counts)),as.data.frame(rowSums(e16_epi@assays$RNA@counts)),as.data.frame(rowSums(e24_epi@assays$RNA@counts)),as.data.frame(rowSums(e26_epi@assays$RNA@counts)),as.data.frame(rowSums(e35_epi@assays$RNA@counts)),as.data.frame(rowSums(e37_epi@assays$RNA@counts)))
+
+head(data)
+colnames(data)
+coldata <- data.frame(condition = factor(c('control', 'control', 'control', 'control','control',  'treat', 'treat', 'treat', 'treat', 'treat', 'treat'),levels = c("control","treat")))
+
+
+dds <- DESeqDataSetFromMatrix(countData = data,colData = coldata,design = ~condition)
+dds1 <- DESeq(dds, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-3, 3) + ylim(0, 2)  #定义刻度边界
+
+p
+
+```
+
+```{r 2}
+#1-1 1-2 1-3 2-1 2-2 2-3 3-1 3-2 3-3       1-4 1-6 2-4 2-5 2-6 3-5 3-6 3-7 
+e11_2 <- subset(e11,subset = CellCluster =="2")
+e12_2 <- subset(e12,subset = CellCluster =="2")
+e14_2 <- subset(e14,subset = CellCluster =="2")
+e16_2 <- subset(e16,subset = CellCluster =="2")
+e22_2 <- subset(e22,subset = CellCluster =="2")
+e24_2 <- subset(e24,subset = CellCluster =="2")
+e26_2 <- subset(e26,subset = CellCluster =="2")
+e32_2 <- subset(e32,subset = CellCluster =="2")
+e33_2 <- subset(e33,subset = CellCluster =="2")
+e35_2 <- subset(e35,subset = CellCluster =="2")
+e37_2 <- subset(e37,subset = CellCluster =="2")
+
+e36_2 <- subset(e36,subset = CellCluster =="2")
+e31_2 <- subset(e31,subset = CellCluster =="2")
+e25_2 <- subset(e25,subset = CellCluster =="2")
+e23_2 <- subset(e23,subset = CellCluster =="2")
+e21_2 <- subset(e21,subset = CellCluster =="2")
+e13_2 <- subset(e13,subset = CellCluster =="2")
+
+
+
+data_2 <- cbind(as.data.frame(rowSums(e11_2@assays$RNA@counts)),as.data.frame(rowSums(e12_2@assays$RNA@counts)),as.data.frame(rowSums(e13_2@assays$RNA@counts)),as.data.frame(rowSums(e21_2@assays$RNA@counts)),as.data.frame(rowSums(e22_2@assays$RNA@counts)),as.data.frame(rowSums(e23_2@assays$RNA@counts)),as.data.frame(rowSums(e31_2@assays$RNA@counts)),as.data.frame(rowSums(e32_2@assays$RNA@counts)),as.data.frame(rowSums(e33_2@assays$RNA@counts)),as.data.frame(rowSums(e14_2@assays$RNA@counts)),as.data.frame(rowSums(e16_2@assays$RNA@counts)),as.data.frame(rowSums(e24_2@assays$RNA@counts)),as.data.frame(rowSums(e25_2@assays$RNA@counts)),as.data.frame(rowSums(e26_2@assays$RNA@counts)),as.data.frame(rowSums(e35_2@assays$RNA@counts)),as.data.frame(rowSums(e36_2@assays$RNA@counts)),as.data.frame(rowSums(e37_2@assays$RNA@counts)))
+
+coldata_2 <- data.frame(condition = factor(c('control', 'control', 'control', 'control','control', 'control', 'control', 'control', 'control',  'treat', 'treat', 'treat', 'treat', 'treat', 'treat','treat','treat'),levels = c("control","treat")))
+
+
+dds_2 <- DESeqDataSetFromMatrix(countData = data_2,colData = coldata_2,design = ~condition)
+dds1 <- DESeq(dds_2, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+res1_select
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-3, 3) + ylim(0, 2)  #定义刻度边界
+
+p
+
+
+
+```
+
+```{r syn}
+e11_syn <- subset(e11,subset = CellCluster =="1")
+e12_syn <- subset(e12,subset = CellCluster =="1")
+e14_syn <- subset(e14,subset = CellCluster =="1")
+e16_syn <- subset(e16,subset = CellCluster =="1")
+e22_syn <- subset(e22,subset = CellCluster =="1")
+e24_syn <- subset(e24,subset = CellCluster =="1")
+e26_syn <- subset(e26,subset = CellCluster =="1")
+e32_syn <- subset(e32,subset = CellCluster =="1")
+e33_syn <- subset(e33,subset = CellCluster =="1")
+e35_syn <- subset(e35,subset = CellCluster =="1")
+e37_syn <- subset(e37,subset = CellCluster =="1")
+
+e36_syn <- subset(e36,subset = CellCluster =="1")
+e31_syn <- subset(e31,subset = CellCluster =="1")
+e25_syn <- subset(e25,subset = CellCluster =="1")
+e23_syn <- subset(e23,subset = CellCluster =="1")
+e21_syn <- subset(e21,subset = CellCluster =="1")
+e13_syn <- subset(e13,subset = CellCluster =="1")
+
+
+
+data_syn <- cbind(as.data.frame(rowSums(e11_syn@assays$RNA@counts)),as.data.frame(rowSums(e12_syn@assays$RNA@counts)),as.data.frame(rowSums(e13_syn@assays$RNA@counts)),as.data.frame(rowSums(e21_syn@assays$RNA@counts)),as.data.frame(rowSums(e22_syn@assays$RNA@counts)),as.data.frame(rowSums(e23_syn@assays$RNA@counts)),as.data.frame(rowSums(e31_syn@assays$RNA@counts)),as.data.frame(rowSums(e32_syn@assays$RNA@counts)),as.data.frame(rowSums(e33_syn@assays$RNA@counts)),as.data.frame(rowSums(e14_syn@assays$RNA@counts)),as.data.frame(rowSums(e16_syn@assays$RNA@counts)),as.data.frame(rowSums(e24_syn@assays$RNA@counts)),as.data.frame(rowSums(e25_syn@assays$RNA@counts)),as.data.frame(rowSums(e26_syn@assays$RNA@counts)),as.data.frame(rowSums(e35_syn@assays$RNA@counts)),as.data.frame(rowSums(e36_syn@assays$RNA@counts)),as.data.frame(rowSums(e37_syn@assays$RNA@counts)))
+
+coldata_2 <- data.frame(condition = factor(c('control', 'control', 'control', 'control','control', 'control', 'control', 'control', 'control',  'treat', 'treat', 'treat', 'treat', 'treat', 'treat','treat','treat'),levels = c("control","treat")))
+
+
+dds_syn <- DESeqDataSetFromMatrix(countData = data_syn,colData = coldata_2,design = ~condition)
+dds1 <- DESeq(dds_syn, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-8, 8) + ylim(0, 8)  #定义刻度边界
+
+p
+
+
+rld <- rlog(dds1, blind=TRUE)
+
+# Plot PCA
+
+DESeq2::plotPCA(rld, intgroup = "condition")
+
+
+res_tbl <- res1 %>%
+        data.frame() %>%
+        rownames_to_column(var="gene") %>%
+        as_tibble()
+
+# Check results output
+res_tbl
+
+padj_cutoff <- 0.05
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl, padj < padj_cutoff) %>%
+        dplyr::arrange(padj)
+
+# Check significant genes output
+sig_res
+
+
+
+## ggplot of top genes
+normalized_counts <- counts(dds, 
+                            normalized =FALSE)
+
+## Order results by padj values
+top20_sig_genes <- sig_res %>%
+        dplyr::arrange(padj) %>%
+        dplyr::pull(gene) %>%
+        head(n=20)
+
+
+top20_sig_norm <- data.frame(normalized_counts) %>%
+        rownames_to_column(var = "gene") %>%
+        dplyr::filter(gene %in% top20_sig_genes)
+
+gathered_top20_sig <- top20_sig_norm %>%
+        gather(colnames(top20_sig_norm)[2:length(colnames(top20_sig_norm))], key = "samplename", value = "normalized_counts")
+        
+gathered_top20_sig <- inner_join(ei[, c("sample_id", "group_id" )], gathered_top20_sig, by = c("sample_id" = "samplename"))
+
+## plot using ggplot2
+ggplot(gathered_top20_sig) +
+        geom_point(aes(x = gene, 
+                       y = normalized_counts, 
+                       color = group_id), 
+                   position=position_jitter(w=0.1,h=0)) +
+        scale_y_log10() +
+        xlab("Genes") +
+        ylab("log10 Normalized Counts") +
+        ggtitle("Top 20 Significant DE Genes") +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+        theme(plot.title = element_text(hjust = 0.5))
+
+# Extract normalized counts for only the significant genes
+sig_norm <- data.frame(normalized_counts) %>%
+        rownames_to_column(var = "gene") %>%
+        dplyr::filter(gene %in% sig_res$gene)
+        
+# Set a color palette
+heat_colors <- brewer.pal(6, "YlOrRd")
+
+# Run pheatmap using the metadata data frame for the annotation
+pheatmap(sig_norm[ , 2:length(colnames(sig_norm))], 
+    color = heat_colors, 
+    cluster_rows = T, 
+    show_rownames = F,
+    annotation = cluster_metadata[, c("group_id", "cluster_id")], 
+    border_color = NA, 
+    fontsize = 10, 
+    scale = "row", 
+    fontsize_row = 10, 
+    height = 20)
+```
+
+```{r cyto}
+e11_cyt <- subset(e11,subset = CellCluster =="0")
+e12_cyt <- subset(e12,subset = CellCluster =="0")
+e14_cyt <- subset(e14,subset = CellCluster =="0")
+e16_cyt <- subset(e16,subset = CellCluster =="0")
+e22_cyt <- subset(e22,subset = CellCluster =="0")
+e24_cyt <- subset(e24,subset = CellCluster =="0")
+e26_cyt <- subset(e26,subset = CellCluster =="0")
+e32_cyt <- subset(e32,subset = CellCluster =="0")
+e33_cyt <- subset(e33,subset = CellCluster =="0")
+e35_cyt <- subset(e35,subset = CellCluster =="0")
+e37_cyt <- subset(e37,subset = CellCluster =="0")
+
+e36_cyt <- subset(e36,subset = CellCluster =="0")
+e31_cyt <- subset(e31,subset = CellCluster =="0")
+e25_cyt <- subset(e25,subset = CellCluster =="0")
+#e23_cyt <- subset(e23,subset = CellCluster =="0")
+e21_cyt <- subset(e21,subset = CellCluster =="0")
+e13_cyt <- subset(e13,subset = CellCluster =="0")
+
+
+
+data_cyt <- cbind(as.data.frame(rowSums(e11_cyt@assays$RNA@counts)),as.data.frame(rowSums(e12_cyt@assays$RNA@counts)),as.data.frame(rowSums(e13_cyt@assays$RNA@counts)),as.data.frame(rowSums(e21_cyt@assays$RNA@counts)),as.data.frame(rowSums(e22_cyt@assays$RNA@counts)),as.data.frame(rowSums(e31_cyt@assays$RNA@counts)),as.data.frame(rowSums(e32_cyt@assays$RNA@counts)),as.data.frame(rowSums(e33_cyt@assays$RNA@counts)),as.data.frame(rowSums(e14_cyt@assays$RNA@counts)),as.data.frame(rowSums(e16_cyt@assays$RNA@counts)),as.data.frame(rowSums(e24_cyt@assays$RNA@counts)),as.data.frame(rowSums(e25_cyt@assays$RNA@counts)),as.data.frame(rowSums(e26_cyt@assays$RNA@counts)),as.data.frame(rowSums(e35_cyt@assays$RNA@counts)),as.data.frame(rowSums(e36_cyt@assays$RNA@counts)),as.data.frame(rowSums(e37_cyt@assays$RNA@counts)))
+
+coldata_cyt <- data.frame(condition = factor(c('control', 'control', 'control', 'control','control', 'control', 'control', 'control', 'treat', 'treat', 'treat', 'treat', 'treat', 'treat','treat','treat'),levels = c("control","treat")))
+
+
+dds_cyt <- DESeqDataSetFromMatrix(countData = data_cyt,colData = coldata_cyt,design = ~condition)
+dds1 <- DESeq(dds_cyt, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-8, 8) + ylim(0, 8)  #定义刻度边界
+
+p
+
+
+```
+
+```{r  hypoblast}
+e11_hyp <- subset(e11,subset = CellCluster =="4")
+e12_hyp <- subset(e12,subset = CellCluster =="4")
+e16_hyp <- subset(e16,subset = CellCluster =="4")
+e22_hyp <- subset(e22,subset = CellCluster =="4")
+e24_hyp <- subset(e24,subset = CellCluster =="4")
+e26_hyp <- subset(e26,subset = CellCluster =="4")
+e32_hyp <- subset(e32,subset = CellCluster =="4")
+e33_hyp <- subset(e33,subset = CellCluster =="4")
+e35_hyp <- subset(e35,subset = CellCluster =="4")
+e37_hyp <- subset(e37,subset = CellCluster =="4")
+
+e25_hyp <- subset(e25,subset = CellCluster =="4")
+e13_hyp <- subset(e13,subset = CellCluster =="4")
+
+data_hyp <- cbind(as.data.frame(rowSums(e11_hyp@assays$RNA@counts)),as.data.frame(rowSums(e12_hyp@assays$RNA@counts)),as.data.frame(rowSums(e13_hyp@assays$RNA@counts)),as.data.frame(rowSums(e22_hyp@assays$RNA@counts)),as.data.frame(rowSums(e32_hyp@assays$RNA@counts)),as.data.frame(rowSums(e33_hyp@assays$RNA@counts)),as.data.frame(rowSums(e16_hyp@assays$RNA@counts)),as.data.frame(rowSums(e24_hyp@assays$RNA@counts)),as.data.frame(rowSums(e25_hyp@assays$RNA@counts)),as.data.frame(rowSums(e26_hyp@assays$RNA@counts)),as.data.frame(rowSums(e35_hyp@assays$RNA@counts)),as.data.frame(rowSums(e37_hyp@assays$RNA@counts)))
+
+coldata_hyp <- data.frame(condition = factor(c('control', 'control', 'control', 'control','control', 'control', 'control','treat', 'treat', 'treat', 'treat', 'treat'),levels = c("control","treat")))
+
+
+dds_hyp <- DESeqDataSetFromMatrix(countData = data_hyp,colData = coldata_hyp,design = ~condition)
+dds1 <- DESeq(dds_hyp, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-8, 8) + ylim(0, 8)  #定义刻度边界
+
+p
+
+```
+
+```{r by experiment times}
+
+#1-1 1-2 1-3 2-1 2-2 2-3 3-1 3-2 3-3       1-4 1-6 2-4 2-5 2-6 3-5 3-6 3-7 
+exp1_you <- merge(e11,y = c(e12,e13))
+exp1_old <- merge(e14,e16)
+
+exp2_you <- merge(e21,c(e22,e23))
+exp2_old <- merge(e24,c(e25,e26))
+
+exp3_you <- merge(e31,y= c(e32,e33))
+exp3_old <- merge(e35, y = c(e36,e37))
+
+
+data_exp <- cbind(as.data.frame(rowSums(exp1_you@assays$RNA@counts)),as.data.frame(rowSums(exp2_you@assays$RNA@counts)),as.data.frame(rowSums(exp3_you@assays$RNA@counts)),as.data.frame(rowSums(exp1_old@assays$RNA@counts)),as.data.frame(rowSums(exp2_old@assays$RNA@counts)),as.data.frame(rowSums(exp3_old@assays$RNA@counts)))
+
+
+coldata_exp <- data.frame(condition = factor(c('control', 'control', 'control', 'treat', 'treat', 'treat'),levels = c("control","treat")))
+
+
+dds_exp <- DESeqDataSetFromMatrix(countData = data_exp,colData = coldata_exp,design = ~condition)
+dds1 <- DESeq(dds_exp, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-8, 8) + ylim(0, 8)  #定义刻度边界
+
+p
+```

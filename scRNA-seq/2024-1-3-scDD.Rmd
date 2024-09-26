@@ -1,0 +1,118 @@
+---
+title: "scDD"
+author: "Xi Luo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+BiocManager::install("scDD")
+browseVignettes("scDD")
+```
+
+```{r}
+suppressMessages({
+library(SingleCellExperiment)
+library(scDD)
+library(dplyr)
+library(ggplot2)
+library(limma)
+library(purrr)
+library(scater)
+library(Seurat)
+library(patchwork)
+})
+```
+
+```{r}
+seurat <- readRDS("cells_0922.Rdata")
+sce <- as.SingleCellExperiment(seurat)
+plotUMAP(sce,colour_by = "ident")
+sce
+```
+
+```{r}
+prior_param=list(alpha=0.01, mu0=0, s0=0.01, a0=0.01, b0=0.01)
+library(BiocParallel)
+register(MulticoreParam(12))
+```
+
+```{r}
+library(edgeR)
+
+# Assuming 'sce' is your SingleCellExperiment object
+
+# Extract counts matrix from SCE object
+counts_matrix <- assays(sce)$counts
+
+# Create a DGEList object from the counts matrix
+dge <- DGEList(counts = counts_matrix)
+
+# Perform TMM normalization
+dge <- calcNormFactors(dge, method = "TMM")
+
+# Get normalized counts matrix
+normalized_counts <- cpm(dge, normalized.lib.sizes = TRUE)
+
+if (all(dim(normalized_counts) == dim(counts_matrix))) {
+  # Add the 'normcounts' slot to the sce object
+  assays(sce)$normcounts <- normalized_counts
+} else {
+  stop("Error: Dimensions of normalized counts matrix do not match the original counts matrix.")
+}
+assays(sce)
+```
+```{r}
+#2024-1-4
+sce <- scDD(sce, prior_param=prior_param,testZeroes=FALSE, permutations=1000,condition = "label",
+            param = MulticoreParam(workers=12))
+```
+
+```{r}
+#2024-1-3
+sce <- scDD(sce, prior_param=prior_param, testZeroes=FALSE,condition = "label",categorize = TRUE)
+```
+
+```{r}
+RES <- results(sce)
+RES
+data <- subset(RES,RES$nonzero.pvalue.adj <= 0.05)
+View(data)
+typeof()
+#saveRDS(sce,"2024-1-3-scDD-sce.rds")
+#write.csv(data,"2024-1-3-scDD-results.csv")
+```
+
+```{r}
+de <- sideViolin(normcounts(sce)[1,], sce$label,
+title.gene=rownames(sce)[1])
+dp <- sideViolin(normcounts(sce)[6,], sce$label,
+title.gene=rownames(sce)[6])
+dm <- sideViolin(normcounts(sce)[11,], sce$label,
+title.gene=rownames(sce)[11])
+db <- sideViolin(normcounts(sce)[16,], sce$label,
+title.gene=rownames(sce)[16])
+ep <- sideViolin(normcounts(sce)[21,], sce$label,
+title.gene=rownames(sce)[21])
+ee <- sideViolin(normcounts(sce)[26,], sce$label,
+title.gene=rownames(sce)[26])
+```
+
+```{r}
+library(gridExtra)
+grid.arrange(de, dp, dm, db, ep, ee, ncol=2)
+```
+
+```{r}
+sideViolin(normcounts(sce)["NBPF10",], sce$label,logT = TRUE,title.gene = "NBPF10")
+```
+```{r}
+
+```
+

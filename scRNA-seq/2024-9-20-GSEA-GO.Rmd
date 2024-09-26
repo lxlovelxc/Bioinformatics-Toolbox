@@ -1,0 +1,313 @@
+---
+title: ''
+author: "xi luo"
+date: "2024-09-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressWarnings({
+  library(DOSE)
+  library(enrichplot)
+  library(clusterProfiler)
+  library(org.Hs.eg.db)
+  library(ggplot2) 
+})
+```
+
+```{r}
+c0 <- read.csv("embryo_batch_916-cluster0_res_tbl.csv",sep = "")
+```
+
+```{r}
+gene_list <- bitr(c0$gene, fromType = "SYMBOL",
+                  toType = "ENTREZID",
+                  OrgDb = org.Hs.eg.db)
+
+# 将log2FC按照Entrez ID进行排序
+gene_list <- merge(gene_list, c0, by.x = "SYMBOL", by.y = "gene")
+gene_list <- gene_list[order(gene_list$log2FoldChange, decreasing = TRUE), ]  # 按log2FC排序
+gene_list <- na.omit(gene_list)  # 移除缺失值
+# 创建一个命名的向量，用于GSEA分析
+gene_list_vector <- gene_list$log2FoldChange
+names(gene_list_vector) <- gene_list$ENTREZID
+head(gene_list_vector)
+```
+
+```{r}
+set.seed(1234)
+gsea_result <- gseKEGG(geneList = gene_list_vector,
+                       organism = 'hsa', 
+                       pvalueCutoff = 0.05,  
+                       minGSSize = 5, 
+                       maxGSSize = 1000,  
+                       verbose = FALSE,
+                       seed = T)
+
+
+# 绘制点图（dotplot）
+dotplot(gsea_result, showCategory = 10, title = "GSEA KEGG Pathways")
+```
+
+```{r}
+
+p <- dotplot(gsea_result, showCategory = 10, title = "GSEA KEGG Pathways")
+dotplot_data <- p$data
+
+# 获取每个通路的基因并将ENTREZID转换为Symbol
+dotplot_data$genes <- sapply(dotplot_data$Description, function(x) {
+  pathway_genes <- gsea_result@result[gsea_result@result$Description == x, "core_enrichment"]
+  entrez_ids <- strsplit(pathway_genes, "/")[[1]]
+  
+  # 转换为Symbol
+  symbol_genes <- bitr(entrez_ids, fromType = "ENTREZID", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL
+  paste(symbol_genes, collapse = ", ")
+})
+
+dotplot_data$genes
+common_genes <- intersect(ls0$gene, unlist(strsplit(dotplot_data$genes, ", ")))
+common_genes
+```
+
+```{r}
+library(ReactomePA)
+
+set.seed(1235)
+# 进行 GSEA 分析
+gsea_reactome <- gsePathway(geneList = gene_list_vector,
+                            organism = "human",
+                            pvalueCutoff = 0.05,
+                            minGSSize = 10,
+                            maxGSSize = 1000,
+                            verbose = FALSE,
+                            seed = T)
+
+# 绘制结果
+dotplot(gsea_reactome, showCategory = 10, title = "GSEA Reactome Pathways")
+```
+
+
+```{r}
+p <- dotplot(gsea_reactome, showCategory = 10, title = "GSEA KEGG Pathways")
+dotplot_data <- p$data
+
+# 获取每个通路的基因并将ENTREZID转换为Symbol
+dotplot_data$genes <- sapply(dotplot_data$Description, function(x) {
+  pathway_genes <- gsea_reactome@result[gsea_reactome@result$Description == x, "core_enrichment"]
+  entrez_ids <- strsplit(pathway_genes, "/")[[1]]
+  
+  # 转换为Symbol
+  symbol_genes <- bitr(entrez_ids, fromType = "ENTREZID", toType = "SYMBOL", OrgDb = org.Hs.eg.db)$SYMBOL
+  paste(symbol_genes, collapse = ", ")
+})
+
+dotplot_data$genes
+common_genes <- intersect(ls0$gene, unlist(strsplit(dotplot_data$genes, ", ")))
+common_genes
+```
+
+```{r}
+library(msigdbr)
+
+# 获取 C2（通路）基因集
+msigdbr_df <- msigdbr(species = "Homo sapiens", category = "H")
+
+# 准备 TERM2GENE 数据框
+term2gene <- msigdbr_df %>% dplyr::select(gs_name, entrez_gene)
+
+set.seed(1236)
+# 进行 GSEA 分析
+gsea_msigdbr <- GSEA(geneList = gene_list_vector,
+                     TERM2GENE = term2gene,
+                     pvalueCutoff = 0.05,
+                     minGSSize = 10,
+                     maxGSSize = 2000,
+                     verbose = FALSE,
+                     seed = T)
+
+# 绘制结果
+dotplot(gsea_msigdbr, showCategory = 10, title = "GSEA MSigDB H Pathways")
+
+```
+
+```{r}
+c1 <- read.csv("embryo_batch_916-cluster1_res_tbl.csv",sep = "")
+```
+
+```{r}
+gene_list <- bitr(c1$gene, fromType = "SYMBOL",
+                  toType = "ENTREZID",
+                  OrgDb = org.Hs.eg.db)
+
+# 将log2FC按照Entrez ID进行排序
+gene_list <- merge(gene_list, c1, by.x = "SYMBOL", by.y = "gene")
+gene_list <- gene_list[order(gene_list$log2FoldChange, decreasing = TRUE), ]  # 按log2FC排序
+gene_list <- na.omit(gene_list)  # 移除缺失值
+# 创建一个命名的向量，用于GSEA分析
+gene_list_vector <- gene_list$log2FoldChange
+names(gene_list_vector) <- gene_list$ENTREZID
+head(gene_list_vector)
+```
+
+```{r}
+  set.seed(1223)
+  gsea_result <- gseKEGG(geneList = gene_list_vector,
+                         organism = 'hsa',  # 'hsa'表示人类
+                         minGSSize = 5,  # 基因集最小包含的基因数
+                         maxGSSize = 1000,  # 基因集最大包含的基因数
+                         pvalueCutoff = 0.05,  # P值的显著性阈值
+                         verbose = FALSE,
+                         seed = T)
+  
+  
+  # 绘制点图（dotplot）
+  dotplot(gsea_result, showCategory = 10, title = "GSEA KEGG Pathways")
+```
+```{r}
+
+gsea_result@result
+```
+
+```{r}
+set.seed(1231)
+# 进行 GSEA 分析
+gsea_reactome <- gsePathway(geneList = gene_list_vector,
+                            organism = "human",
+                            pvalueCutoff = 0.05,
+                            minGSSize = 10,
+                            maxGSSize = 2000,
+                            verbose = FALSE,
+                            seed = T)
+
+# 绘制结果
+dotplot(gsea_reactome, showCategory = 10, title = "GSEA Reactome Pathways")
+```
+```{r}
+gsea_reactome@result
+```
+
+
+```{r}
+# 获取 C2（通路）基因集
+msigdbr_df <- msigdbr(species = "Homo sapiens", category = "C2","CP")
+
+# 准备 TERM2GENE 数据框
+term2gene <- msigdbr_df %>% dplyr::select(gs_name, entrez_gene)
+
+set.seed(1222)
+# 进行 GSEA 分析
+gsea_msigdbr <- GSEA(geneList = gene_list_vector,
+                     TERM2GENE = term2gene,
+                     pvalueCutoff = 0.05,
+                     minGSSize = 5,
+                     maxGSSize = 2000,
+                     verbose = FALSE,
+                     seed = T)
+
+# 绘制结果
+dotplot(gsea_msigdbr, showCategory = 10, title = "GSEA MSigDB C2 Pathways")
+```
+```{r}
+gsea_msigdbr@result
+```
+
+```{r}
+library(ggplot2)#柱状图和点状图
+library(stringr)#基因ID转换
+library(enrichplot)#GO,KEGG,GSEA
+library(clusterProfiler)#GO,KEGG,GSEA
+library(GOplot)#弦图，弦表图，系统聚类图
+library(DOSE)
+library(ggnewscale)
+library(topGO)#绘制通路网络图
+library(circlize)#绘制富集分析圈图
+library(ComplexHeatmap)#绘制图例
+library(org.Hs.eg.db)
+```
+
+
+```{r}
+
+
+upregulated <- subset(ls0,subset = log2FoldChange >=0)
+downregulated <- subset(ls0, subset = log2FoldChange <0)
+GO_database <- 'org.Hs.eg.db'
+gene_up <- bitr(upregulated$gene,fromType = 'SYMBOL',toType = 'ENTREZID',OrgDb = GO_database)
+gene_down <- bitr(downregulated$gene,fromType = 'SYMBOL',toType = 'ENTREZID',OrgDb = GO_database)
+GO_up<-enrichGO( gene_up$ENTREZID,
+              OrgDb = GO_database,
+              keyType = "ENTREZID",
+              ont = "ALL",
+              pAdjustMethod = "BH",
+              pvalueCutoff = 0.1,
+              qvalueCutoff = 0.2,
+              readable = T,
+              minGSSize = 10,
+              maxGSSize = 1000,
+)         
+barplot(GO_up)
+
+GO_result_up_readable <- setReadable(GO_up, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+df <- as.data.frame(GO_up)
+df$GeneCountColor <- df$p.adjust
+ggplot(df, aes(x = reorder(Description, Count), y = Count, fill = GeneCountColor)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # 翻转坐标，使X轴为通路名
+  labs(title = "Upregulated Genes GO Pathways(embryo_batch cluster0)", x = "Pathways", y = "Gene Count", fill = "p.adjust") +
+  geom_text(aes(label = geneID),
+            hjust = 1.1,   # 将标签放在条形图内部右边
+            color = "white",  # 将文本颜色设置为白色，使其在蓝色条形中更明显
+            size = 3) +    # 调整标注字体大小
+  scale_fill_gradient(low = "skyblue", high = "blue") +  # 创建颜色梯度
+  theme_minimal() +
+  theme(
+    plot.margin = unit(c(1, 6, 1, 1), "cm"),  # 增加图形边距：上、右、下、左
+    axis.text = element_text(size = 10),  # 增大轴标签字体大小
+    plot.title = element_text(size = 14)  # 增大标题字体大小
+  )
+```
+
+```{r}
+upregulated <- subset(ls1,subset = log2FoldChange >=0)
+downregulated <- subset(ls1, subset = log2FoldChange <0)
+GO_database <- 'org.Hs.eg.db'
+gene_up <- bitr(upregulated$gene,fromType = 'SYMBOL',toType = 'ENTREZID',OrgDb = GO_database)
+gene_down <- bitr(downregulated$gene,fromType = 'SYMBOL',toType = 'ENTREZID',OrgDb = GO_database)
+GO_up<-enrichGO( gene_up$ENTREZID,
+              OrgDb = GO_database,
+              keyType = "ENTREZID",
+              ont = "BP",
+              pAdjustMethod = "BH",
+              pvalueCutoff = 0.05,
+              qvalueCutoff = 0.2,
+              readable = T,
+              minGSSize = 10,
+              maxGSSize = 1000,
+)         
+barplot(GO_up)
+```
+
+```{r}
+ggplot(df, aes(x = reorder(Description, Count), y = Count, fill = GeneCountColor)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # 翻转坐标，使X轴为通路名
+  labs(title = "Upregulated Genes GO Pathways(embryo_batch cluster1)", x = "Pathways", y = "Gene Count", fill = "p.adjust") +
+  geom_text(aes(label = geneID),
+            hjust = 1.1,   # 将标签放在条形图内部右边
+            color = "white",  # 将文本颜色设置为白色，使其在蓝色条形中更明显
+            size = 3) +    # 调整标注字体大小
+  scale_fill_gradient(low = "skyblue", high = "blue") +  # 创建颜色梯度
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 5)) +  # 设置Y轴刻度为整数
+  theme_minimal() +
+  theme(
+    plot.margin = unit(c(1, 6, 1, 1), "cm"),  # 增加图形边距：上、右、下、左
+    axis.text = element_text(size = 10),  # 增大轴标签字体大小
+    plot.title = element_text(size = 14)  # 增大标题字体大小
+  )
+
+```
+

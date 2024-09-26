@@ -1,0 +1,387 @@
+---
+title: "Untitled"
+author: "Xi Luo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+suppressMessages({
+  library(scater)
+  library(Seurat)
+  library(tidyverse)
+  library(cowplot)
+  library(Matrix.utils)
+  library(edgeR)
+  library(dplyr)
+  library(magrittr)
+  library(purrr)
+  library(reshape2)
+  library(S4Vectors)
+  library(tibble)
+  library(SingleCellExperiment)
+  library(pheatmap)
+  library(apeglm)
+  library(png)
+  library(DESeq2)
+  library(RColorBrewer)
+  library(viridis)
+  library(EnhancedVolcano)
+  library(ggplot2)
+  library(gridExtra)
+})
+```
+
+
+```{r}
+data <- readRDS("2024-9-13-with-additional-embryo-raw-data.Rdata")
+data1 <- subset(data, subset = nFeature_RNA > 600 )#& percent.mt < 60
+plot(data1$percent.mt,data1$nFeature_RNA,pch = 20)
+data1
+data1 <- JoinLayers(data1)
+data1 <- NormalizeData(data1)
+data1 <- FindVariableFeatures(data1, selection.method = "mean.var.plot")
+# all.genes <- rownames(data1)
+data1 <- ScaleData(data1,model.use = 'linear',do.scale = T,do.center = T)
+data1 <- RunPCA(data1, features = NULL)
+ElbowPlot(data1)
+data1 <- FindNeighbors(data1, dims = 1:15)#20 /25 is the best choice
+data1 <- FindClusters(data1, resolution = 0.1)
+data1 <- RunUMAP(data1,reduction = "pca",dims = 1:15)
+DimPlot(object = data1, reduction = "umap",label= T)
+```
+
+```{r}
+syn <- subset(data1, subset = seurat_clusters == "0")
+syn  <- subset(syn , subset = embryo %in% c("1-1","1-3","2-1","3-2","3-3","3-6","3-7","4-1","4-27","5-5.2","5-5.4","5-6.1","5-7.1","5-7.4","5-7.5"))
+genes <- syn_eu$gene
+# 自定义颜色映射，将young设置为蓝色，old设置为红色
+label_colors <- c("young" = "blue", "old" = "red")
+
+# 创建一个新的列来组合年龄和Donor的信息，作为x轴标签
+syn@meta.data$age_donor <- with(syn@meta.data, paste(Age, Donor, sep = "_"))
+
+# 按age排序，确保按age对数据进行排序
+syn@meta.data <- syn@meta.data[order(syn@meta.data$Age), ]
+
+# 提取embryo的名字，并为每个embryo生成对应的age_donor标签
+unique_embryos <- unique(syn@meta.data$embryo)
+embryo_labels <- sapply(unique_embryos, function(emb) {
+  index <- which(syn@meta.data$embryo == emb)[1] # 取第一个匹配的index
+  paste(syn@meta.data$Age[index], syn@meta.data$Donor[index], sep = "_")
+})
+
+
+# 重新设置embryo的顺序，确保是按age从小到大排列
+syn@meta.data$embryo <- factor(syn@meta.data$embryo, levels = unique(syn@meta.data$embryo))
+
+# 打开PDF设备保存结果
+pdf("Syncytiotrophoblast_Euploid_DE_Vlnplots.pdf", width = 8.5, height = 8)
+
+# 初始化空列表存储图形
+plots <- list()
+
+# 循环绘制每个基因的小提琴图
+for (i in seq_along(genes)) {
+  gene <- genes[i]
+  
+  # 绘制小提琴图，以embryo为分组
+  plot <- VlnPlot(object = syn, features = gene, group.by = "embryo") +
+    labs(title = paste("Violin Plot for", gene)) +
+    theme_minimal() +
+    scale_y_continuous(expand = c(0, 0)) + # y轴不留空白
+    scale_x_discrete(labels = embryo_labels[match(levels(syn@meta.data$embryo), unique_embryos)]) + # x轴显示age_donor的标签
+    theme(axis.title.x = element_blank(), # 移除x轴标题
+          axis.text.x = element_text(face = "bold",
+                                     size = 6,
+                                     angle = 45,
+                                     hjust = 1,
+                                     vjust = 1,
+                                     color = sapply(embryo_labels, function(x) {
+                                       label_part <- strsplit(x, "_")[[1]][2] # 提取Donor部分
+                                       if (label_part %in% names(label_colors)) {
+                                         label_colors[[label_part]]
+                                       } else {
+                                         "black" # 如果Donor没有对应的颜色，使用黑色
+                                       }
+                                     }))) +
+    theme(panel.grid.major = element_blank(), # 取消网格线
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(color = "black"), # 保留x轴和y轴线
+          legend.position = "none") # 取消图例
+  
+  # 将图形添加到列表
+  plots[[i]] <- plot
+  # print(plot)
+  
+  # 每4张图保存一页
+  if (i %% 4 == 0 || i == length(genes)) {
+    grid.arrange(grobs = plots[i:(i-3)], ncol = 2, nrow = 2)
+    plots <- list() # 清空图形列表
+  }
+}
+
+# 关闭PDF设备
+dev.off()
+
+```
+
+```{r}
+cyt <- subset(data1, subset = seurat_clusters == "1")
+cyt  <- subset(cyt , subset = embryo %in% c("1-1","1-3","2-1","3-2","3-3","3-6","3-7","4-1","4-27","5-5.2","5-5.4","5-6.1","5-7.1","5-7.4","5-7.5"))
+genes <- "IQCG"
+# 自定义颜色映射，将young设置为蓝色，old设置为红色
+label_colors <- c("young" = "blue", "old" = "red")
+
+# 创建一个新的列来组合年龄和Donor的信息，作为x轴标签
+cyt@meta.data$age_donor <- with(cyt@meta.data, paste(Age, Donor, sep = "_"))
+
+# 按age排序，确保按age对数据进行排序
+cyt@meta.data <- cyt@meta.data[order(cyt@meta.data$Age), ]
+
+# 提取embryo的名字，并为每个embryo生成对应的age_donor标签
+unique_embryos <- unique(cyt@meta.data$embryo)
+embryo_labels <- sapply(unique_embryos, function(emb) {
+  index <- which(cyt@meta.data$embryo == emb)[1] # 取第一个匹配的index
+  paste(cyt@meta.data$Age[index], cyt@meta.data$Donor[index], sep = "_")
+})
+
+
+# 重新设置embryo的顺序，确保是按age从小到大排列
+cyt@meta.data$embryo <- factor(cyt@meta.data$embryo, levels = unique(cyt@meta.data$embryo))
+
+# 打开PDF设备保存结果
+pdf("Cytotrophoblast_Euploid_DE_Vlnplots.pdf", width = 8.5, height = 8)
+
+# 初始化空列表存储图形
+plots <- list()
+
+# 循环绘制每个基因的小提琴图
+for (i in seq_along(genes)) {
+  gene <- genes[i]
+  
+  # 绘制小提琴图，以embryo为分组
+  plot <- VlnPlot(object = cyt, features = gene, group.by = "embryo") +
+    labs(title = paste("Violin Plot for", gene)) +
+    theme_minimal() +
+    scale_y_continuous(expand = c(0, 0)) + # y轴不留空白
+    scale_x_discrete(labels = embryo_labels[match(levels(syn@meta.data$embryo), unique_embryos)]) + # x轴显示age_donor的标签
+    theme(axis.title.x = element_blank(), # 移除x轴标题
+          axis.text.x = element_text(face = "bold",
+                                     size = 6,
+                                     angle = 45,
+                                     hjust = 1,
+                                     vjust = 1,
+                                     color = sapply(embryo_labels, function(x) {
+                                       label_part <- strsplit(x, "_")[[1]][2] # 提取Donor部分
+                                       if (label_part %in% names(label_colors)) {
+                                         label_colors[[label_part]]
+                                       } else {
+                                         "black" # 如果Donor没有对应的颜色，使用黑色
+                                       }
+                                     }))) +
+    theme(panel.grid.major = element_blank(), # 取消网格线
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(color = "black"), # 保留x轴和y轴线
+          legend.position = "none") # 取消图例
+  
+  # 将图形添加到列表
+  plots[[i]] <- plot
+  print(plot)
+  
+}
+
+# 关闭PDF设备
+dev.off()
+```
+
+```{r}
+data <- readRDS("2024-9-13-with-additional-embryo-raw-data.Rdata")
+data1 <- subset(data, subset = nFeature_RNA > 600 )
+data1
+data1 <- JoinLayers(data1)
+data1 <- NormalizeData(data1)
+data1 <- FindVariableFeatures(data1, selection.method = "mean.var.plot")
+data1 <- ScaleData(data1,model.use = 'linear',do.scale = T,do.center = T)
+data1 <- RunPCA(data1, features = NULL)
+data1 <- FindNeighbors(data1, dims = 1:18)#20 /25 is the best choice
+data1 <- FindClusters(data1, resolution = 0.1)
+data1 <- RunUMAP(data1,reduction = "pca",dims = 1:18)
+DimPlot(object = data1, reduction = "umap",label= T)
+```
+
+```{r}
+all <- data1
+# all <- subset(all, subset = embryo %in% c("1-1","1-3","2-1","3-2","3-3","3-6","3-7","4-1","4-27","5-5.2","5-5.4","5-7.1","5-7.4","5-7.5"))
+all$group_id <- all$label
+all$sample_id <- all$embryo
+
+#counts <- all@assays$RNA@counts
+counts <- GetAssayData(all,slot = "counts")
+metadata <- all@meta.data
+metadata$cluster_id <- factor(all@active.ident)
+library(SingleCellExperiment)
+sce <- SingleCellExperiment(assays = list(counts = counts), 
+                            colData = metadata)
+
+groups <- colData(sce)[, c("cluster_id", "sample_id")]
+
+assays(sce)
+dim(counts(sce))
+counts(sce)[1:6,1:6]
+dim(colData(sce))
+head(colData(sce))
+
+
+kids <- purrr::set_names(levels(sce$cluster_id))
+kids
+nk <- length(kids)
+nk
+sce$sample_id <- as.factor(sce$sample_id)
+sids <- purrr::set_names(levels(sce$sample_id))
+ns <- length(sids)
+ns
+
+
+n_cells <- as.numeric(table(sce$sample_id))
+m <- match(sids, sce$sample_id)
+ei <- data.frame(colData(sce)[m, ], 
+                 n_cells, row.names = NULL) %>% 
+  select(-"cluster_id")
+ei
+
+
+groups <- colData(sce)[, c("cluster_id", "sample_id")]
+pb <- aggregate.Matrix(t(counts(sce)), 
+                       groupings = groups, fun = "sum") 
+class(pb)
+dim(pb)
+pb[1:6, 1:6]
+
+splitf <- sapply(stringr::str_split(rownames(pb), 
+                                    pattern = "_",  
+                                    n = 2), 
+                 `[`, 1)
+
+pb <- split.data.frame(pb, 
+                       factor(splitf)) %>%
+  lapply(function(u) 
+    set_colnames(t(u), 
+                 stringr::str_extract(rownames(u), "(?<=_)[:alnum:]+")))
+class(pb)
+str(pb)
+
+table(sce$cluster_id, sce$sample_id)
+colnames(pb[[1]] ) <- levels(sce$sample_id)#cluster0
+colnames(pb[[2]] ) <- c("1-1", "1-2", "1-3", "1-4", "1-6", "2-1", "2-2", "2-3", "2-4", "2-5", "2-6", "3-1", "3-2", "3-3", "3-5", "3-6", "3-7", "4-1",
+                        "4-27", "5-5.2", "5-5.4", "5-5.5", "5-6.2", "5-6.4", "5-7.1", "5-7.4", "5-7.5")#cluster1
+##########################################################################
+get_sample_ids <- function(x){
+  pb[[x]] %>%
+    colnames()
+}
+de_samples <- map(1:length(kids), get_sample_ids) %>%
+  unlist()
+# Get cluster IDs for each of the samples
+
+samples_list <- map(1:length(kids), get_sample_ids)
+
+get_cluster_ids <- function(x){
+  rep(names(pb)[x], 
+      each = length(samples_list[[x]]))
+}
+
+de_cluster_ids <- map(1:length(kids), get_cluster_ids) %>%
+  unlist()
+
+gg_df <- data.frame(cluster_id = de_cluster_ids,
+                    sample_id = de_samples)
+
+gg_df <- left_join(gg_df, ei[, c("sample_id", "group_id")]) 
+
+
+metadata <- gg_df %>%
+  dplyr::select(cluster_id, sample_id, group_id) 
+table(all$batch)
+
+metadata
+#for all embryos
+a <- c(rep("exp1",each = 5),rep("exp2",each = 6),rep("exp3",each = 6),rep("exp5",each = 1),rep("exp4",each= 1),rep("exp6",each=3),rep("exp7",each = 3)
+       ,rep("exp8",each = 4),rep("exp1",each = 5),rep("exp2",each = 6),rep("exp3",each = 2),rep("exp5",each = 1),rep("exp4",each=1),rep("exp6",each = 3),
+       rep("exp7",each = 2),rep("exp8",each = 3),rep("NA",each = 37))
+metadata$experiment <- a
+#metadata$byexperiment <- b
+metadata$cluster_id <- as.factor(metadata$cluster_id)
+clusters <- levels(metadata$cluster_id)
+clusters
+############################################################################
+cluster_metadata <- metadata[which(metadata$cluster_id == clusters[2]), ]
+head(cluster_metadata)
+rownames(cluster_metadata) <- cluster_metadata$sample_id
+head(cluster_metadata)
+counts <- pb[[clusters[2]]]
+
+cluster_counts <- data.frame(counts[,which(colnames(counts ) %in% rownames(cluster_metadata))])
+
+colnames(cluster_counts) <- rownames(cluster_metadata)
+
+dds <- DESeqDataSetFromMatrix(cluster_counts, 
+                              colData = cluster_metadata, 
+                              design = ~ experiment + group_id)
+# Transform counts for data visualization
+rld <- rlog(dds, blind=TRUE)
+
+# Plot PCA
+
+DESeq2::plotPCA(rld, intgroup = c("group_id","experiment"))
+
+# Extract the rlog matrix from the object and compute pairwise correlation values
+rld_mat <- assay(rld)
+rld_cor <- cor(rld_mat)
+
+# Plot heatmap
+pheatmap(rld_cor, annotation = cluster_metadata[, c("group_id","experiment"), drop=F])
+
+
+# Run DESeq2 differential expression analysis
+dds <- DESeq(dds)
+
+# Plot dispersion estimates
+plotDispEsts(dds)
+contrast <- c("group_id","young","old")
+resultsNames(dds)
+res <- results(dds, 
+               contrast = contrast,
+               alpha = 0.05)
+
+res <- lfcShrink(dds, 
+                 coef = "group_id_young_vs_old",
+                 type="apeglm")
+
+# Turn the results object into a tibble for use with tidyverse functions
+res_tbl <- res %>%
+  data.frame() %>%
+  rownames_to_column(var="gene") %>%
+  as_tibble()
+
+# Check results output
+res_tbl
+# write.table(res_tbl,"embryo_batch_916-cluster0_res_tbl.csv")
+# write.table(res_tbl,"embryo_batch_916-cluster1_res_tbl.csv")
+# write.table(res_tbl,"2024-9-12-cluster1_res_tbl.csv")
+# Set thresholds
+padj_cutoff <- 0.05
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl, padj < padj_cutoff) %>%
+  dplyr::arrange(padj)
+
+# Check significant genes output
+sig_res
+```
+

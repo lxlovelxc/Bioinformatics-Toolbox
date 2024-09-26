@@ -1,0 +1,229 @@
+---
+title: "psedobulk_DEseq"
+author: "Xi Luo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(Polychrome)
+library(SingleCellExperiment)
+library(tidyverse)
+library(cowplot)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+setwd("/home/xi/Desktop")
+
+
+#color setting
+mypal <- kelly.colors(22)
+swatch(mypal)
+set.seed(935234)
+P40 <- createPalette(40, c("#FF0000", "#00FF00", "#0000FF"), range = c(30, 80))
+swatch(P40)
+
+
+data_0112 <- readRDS("data_0112_all.Rdata")
+data_1207 <- readRDS("data_1207_all.Rdata")
+data_1101 <- readRDS("data_1101_all.Rdata")
+
+
+all <- merge(data_0112, y = c(data_1207,data_1101))
+all
+all <- NormalizeData(all, normalization.method = "LogNormalize", scale.factor = 10000)
+all <- FindVariableFeatures(all, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(all)
+all <- ScaleData(all, features = all.genes)
+all <- RunPCA(all,features = VariableFeatures(object = all))
+#Investigate the intrinsic dimensionality of the data using an elbow plot:
+ElbowPlot(all)
+VizDimLoadings(all,dims = 1:2,reduction = "pca")
+DimHeatmap(all,dims = 1:5,balanced = TRUE)
+all <- FindNeighbors(all, dims = 1:10)
+all <- FindClusters(all, resolution = 0.1)
+DimPlot(all,reduction = "pca")
+all <- RunUMAP(all, dims = 1:10)
+DimPlot(all, reduction = "umap",pt.size =1,label = TRUE)
+
+
+table(all$seurat_clusters,all$embryo)
+
+new.cluster.ids <- c("Cytotrophoblasts", "Syncytitrophoblasts", "2", "Epiblast", "Hypoblast")
+names(new.cluster.ids) <- levels(all)
+all <- RenameIdents(all, new.cluster.ids)
+DimPlot(all, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+rna.markers <- FindAllMarkers(all, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+rna.markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 2, order_by = avg_log2FC)
+
+rna.markers %>%
+  group_by(cluster) %>%
+  top_n(n = 20, wt = avg_log2FC) -> top20
+DoHeatmap(all, features = top20$gene)# + NoLegend()
+
+
+# How many cells are in each cluster
+table(Idents(all))
+# How many cells are in each replicate?
+table(all$label)
+# What proportion of cells are in each cluster?
+prop.table(table(Idents(all)))
+# How does cluster membership vary by replicate?
+table(Idents(all), all$label)
+
+
+# What are the cell names of all NK cells?
+WhichCells(all, idents = "Epiblast")
+
+
+# How can I calculate the average expression of all cells within a cluster?
+cluster.averages <- AverageExpression(all)
+tail(cluster.averages[["RNA"]][, 1:5])
+
+orig.levels <- levels(all)
+Idents(all) <- gsub(pattern = " ", replacement = "_", x = Idents(all))
+orig.levels <- gsub(pattern = " ", replacement = "_", x = orig.levels)
+levels(all) <- orig.levels
+cluster.averages <- AverageExpression(all, return.seurat = TRUE)
+cluster.averages
+
+# How can I plot the average expression of NK cells vs. CD8 T cells?  Pass do.hover = T for an
+# interactive plot to identify gene outliers
+CellScatter(cluster.averages, cell1 = "Epiblast", cell2 = "Hypoblast")
+
+#cluster_DEseq <- FindMarkers(cluster.averages,ident.1 = "2",ident.2 = "Epiblast")
+
+# How can I calculate expression averages separately for each replicate?
+cluster.averages <- AverageExpression(all, return.seurat = TRUE,add.ident = "label")
+# You can also plot heatmaps of these 'in silico' bulk datasets to visualize agreement between
+# replicates
+DoHeatmap(cluster.averages, features = unlist(TopFeatures(all[["pca"]], nfeatures = 40,balanced = TRUE,dim = 1)), size = 4,
+         draw.lines = FALSE)
+
+
+all$CellCluster <- Idents(all)
+hypoblast <- subset(all,subset = CellCluster == "Hypoblast")
+hypoblast_young <- subset(hypoblast,subset = label =="young")
+hypoblast_old <- subset(hypoblast,subset = label =="old")
+
+hypo_you_sum <- rowSums(hypoblast_young@assays$RNA@counts)
+hypo_you_sum <- as.data.frame(hypo_you_sum)
+hypo_old_sum <- rowSums(hypoblast_old@assays$RNA@counts)
+hypo_old_sum <- as.data.frame(hypo_old_sum)
+
+
+epiblast <- subset(all,subset = CellCluster =="Epiblast")
+epi_you_sum <- as.data.frame(rowSums(subset(epiblast,subset = label == "young")@assays$RNA@counts))
+epi_old_sum <- as.data.frame(rowSums(subset(epiblast,subset = label == "old")@assays$RNA@counts))
+
+cytotrophoblast <- subset(all,subset = CellCluster == "Cytotrophoblasts")
+cyto_you_sum <-  as.data.frame(rowSums(subset(cytotrophoblast,subset = label == "young")@assays$RNA@counts))
+cyto_old_sum <- as.data.frame(rowSums(subset(cytotrophoblast,subset = label == "old")@assays$RNA@counts))
+
+
+syncyto <- subset(all,subset = CellCluster == "Syncytitrophoblasts")
+syn_you_sum <- as.data.frame(rowSums(subset(syncyto,subset = label == "young")@assays$RNA@counts))
+syn_old_sum <- as.data.frame(rowSums(subset(syncyto,subset = label == "old")@assays$RNA@counts))
+
+
+two <- subset(all,subset = CellCluster == "2")
+two_you_sum <- as.data.frame(rowSums(subset(two,subset = label == "young")@assays$RNA@counts))
+two_old_sum <- as.data.frame(rowSums(subset(two,subset = label == "old")@assays$RNA@counts))
+
+data <- cbind(epi_you_sum,cyto_you_sum,syn_you_sum,two_you_sum,hypo_you_sum,epi_old_sum,cyto_old_sum,syn_old_sum,two_old_sum,hypo_old_sum)
+
+
+colnames(data) <- c("epi_you","cyto_you","syn_you","two_you","hypo_you","epi_old","cyto_old","syn_old","two_old","hypo_old")
+condition1 <- c("control","A","A","A","A","treat","B","B","B","B")
+coldata <- cbind(coldata,as.data.frame(condition1))
+head(data)
+
+#saveRDS(data,"psedobulk.Rdata")
+#coldata <- data.frame(condition= factor(c("old","young"),levels = c("old","young")))
+coldata <- data.frame(condition = factor(rep(c('control', 'treat'), each = 5), levels = c('control', 'treat')))
+#读取基因表达矩阵
+#targets <- readRDS('psedobulk.Rdata')
+
+#coldata <- data.frame(condition = factor(rep(c("young","old"),each = 5),levels = c("young","old")))
+#dds <- DESeqDataSetFromMatrix(countData = dat, colData = coldata, design= ~condition)
+dds <- DESeqDataSetFromMatrix(countData = data,colData = coldata,design = ~condition1)
+
+dds1 <- DESeq(dds, fitType = 'mean', minReplicatesForReplace = Inf, parallel = TRUE)
+res <- results(dds1)
+res
+
+#res_epi <- results(dds1,contrast = c("condition1","epi_you","epi_old"))
+
+
+res1 <- data.frame(res, stringsAsFactors = FALSE, check.names = FALSE)
+write.table(res1, 'control_treat.DESeq2.txt', col.names = NA, sep = '\t', quote = FALSE)
+##筛选差异表达基因
+#首先对表格排个序，按 padj 值升序排序，相同 padj 值下继续按 log2FC 降序排序
+res1 <- res1[order(res1$padj, res1$log2FoldChange, decreasing = c(FALSE, TRUE)), ]
+
+#log2FC≥1 & padj<0.01 标识 up，代表显著上调的基因
+#log2FC≤-1 & padj<0.01 标识 down，代表显著下调的基因
+#其余标识 none，代表非差异的基因
+res1[which(res1$log2FoldChange >= 1 & res1$pvalue < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$pvalue < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$pvalue >= 0.05),'sig'] <- 'none'
+
+#输出选择的差异基因总表
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+write.table(res1_select, file = 'control_treat.DESeq2.select.txt', sep = '\t', col.names = NA, quote = FALSE)
+
+#根据 up 和 down 分开输出
+res1_up <- subset(res1, sig == 'up')
+res1_down <- subset(res1, sig == 'down')
+
+res1_up
+res1_down
+
+write.table(res1_up, file = 'control_treat.DESeq2.up.txt', sep = '\t', col.names = NA, quote = FALSE)
+write.table(res1_down, file = 'control_treat.DESeq2.down.txt', sep = '\t', col.names = NA, quote = FALSE)
+
+
+#默认情况下，横轴展示 log2FoldChange，纵轴展示 -log10 转化后的 padj
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  #绘制散点图
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +  #自定义点的颜色
+labs(x = 'log2 Fold Change', y = '-log10 p-value', title = 'control vs treat', color = '') +  #坐标轴标题
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), #背景色、网格线、图例等主题修改
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  #添加阈值线
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-5, 5) + ylim(0, 5)  #定义刻度边界
+
+p
+```
+
+
+```{r}
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("muscat",force = TRUE)
+```
+
+```{r}
+BiocManager::install('edgeR')
+
+```
+

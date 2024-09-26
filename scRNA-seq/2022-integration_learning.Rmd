@@ -1,0 +1,185 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(Seurat)
+library(patchwork)
+library(Polychrome)
+
+set.seed(935234)
+P40 <- createPalette(40, c("#FF0000", "#00FF00", "#0000FF"), range = c(30, 80))
+swatch(P40)
+
+```
+
+```{r}
+data1 <- readRDS("embryo_integrated_allembryos_filtered_0517.Rdata")
+data_0112 <- readRDS("cells_0112.Rdata")
+data_1207 <- readRDS("cells_1207.Rdata")
+data_1101 <- readRDS("cells_1101.Rdata")
+
+
+data2 <- merge(data_0112, y = c(data_1207,data_1101))
+
+data1$dataset <- "nc_data"
+data2$dataset <- "our_data"
+
+
+y = merge(data1,  data2)
+
+embryo.list <- SplitObject(,split.by = "dataset")
+
+embryo.list <- lapply(X = embryo.list, FUN = SCTransform)
+features <- SelectIntegrationFeatures(object.list = embryo.list, nfeatures = 3000)
+embryo.list <- PrepSCTIntegration(object.list = embryo.list, anchor.features = features)
+
+embryo.anchors <- FindIntegrationAnchors(object.list = embryo.list, normalization.method = "SCT",
+    anchor.features = features)
+embryo.combined.sct <- IntegrateData(anchorset = embryo.anchors, normalization.method = "SCT")
+
+
+embryo.combined.sct <- RunPCA(embryo.combined.sct, verbose = FALSE)
+embryo.combined.sct <- RunUMAP(embryo.combined.sct, reduction = "pca", dims = 1:30)
+```
+
+```{r}
+# For performing differential expression after integration, we switch back to the original
+# data
+DefaultAssay(embryo.combined.sct) <- "RNA"
+nk.markers <- FindConservedMarkers(embryo.combined.sct, ident.1 = 6, grouping.var = "dataset", verbose = FALSE)
+head(nk.markers)
+```
+
+
+
+```{r}
+library(Seurat)
+library(SeuratData)
+library(patchwork)
+```
+
+```{r}
+# install dataset
+InstallData("ifnb")
+```
+
+```{r}
+library(Seurat)
+library(SeuratData)
+library(patchwork)
+# install dataset
+InstallData("ifnb")
+# load dataset
+LoadData("ifnb")
+
+# split the dataset into a list of two seurat objects (stim and CTRL)
+ifnb.list <- SplitObject(ifnb, split.by = "stim")
+
+# normalize and identify variable features for each dataset independently
+ifnb.list <- lapply(X = ifnb.list, FUN = function(x) {
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = ifnb.list)
+```
+
+```{r}
+library(Seurat)
+data1 <- readRDS("embryo_integrated_allembryos_filtered_0517.Rdata")
+data_0112 <- readRDS("cells_0112.Rdata")
+data_1207 <- readRDS("cells_1207.Rdata")
+data_1101 <- readRDS("cells_1101.Rdata")
+
+
+data2 <- merge(data_0112, y = c(data_1207,data_1101))
+
+data1$dataset <- "nc_data"
+data2$dataset <- "our_data"
+
+embryo.list = list()
+embryo.list$NC_GROUP <- data1
+embryo.list$OUR_GROUP <- data2
+
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = embryo.list)
+
+embryo.anchors <- FindIntegrationAnchors(object.list = embryo.list, anchor.features = features)
+
+# this command creates an 'integrated' data assay
+embryo.combined <- IntegrateData(anchorset = embryo.anchors)
+
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+DefaultAssay(embryo.combined) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+embryo.combined <- ScaleData(embryo.combined, verbose = FALSE)
+embryo.combined <- RunPCA(embryo.combined, npcs = 30, verbose = FALSE)
+embryo.combined <- RunUMAP(embryo.combined, reduction = "pca", dims = 1:30)
+embryo.combined <- FindNeighbors(embryo.combined, reduction = "pca", dims = 1:30)
+embryo.combined <- FindClusters(embryo.combined, resolution = 0.5)
+
+DimPlot(embryo.combined, reduction = "umap", label = TRUE, repel = TRUE)
+DimPlot(embryo.combined, reduction = "umap", group.by = "dataset")
+
+
+# For performing differential expression after integration, we switch back to the original
+# data
+DefaultAssay(embryo.combined) <- "RNA"
+nk.markers <- FindConservedMarkers(embryo.combined, ident.1 = 6, grouping.var = "dataset", verbose = FALSE)
+head(nk.markers)
+
+p1 <- DimPlot(embryo.combined, reduction = "umap")
+p2 <- DimPlot(embryo.combined, reduction = "umap", group.by = "dataset", label = TRUE, repel = TRUE) +
+    NoLegend()
+p1 + p2
+
+
+```
+
+```{r}
+library(ggplot2)
+library(cowplot)
+library(patchwork)
+library(Seurat)
+data1 <- readRDS("embryo_integrated_allembryos_filtered.Rdata")
+data2 <- readRDS("human_embryo_1101_integrated_final.Rdata")
+
+data1$dataset <- "nc_data"
+data2$dataset <- "our_data"
+
+embryo.list = list()
+embryo.list$NC_GROUP <- data1
+embryo.list$OUR_GROUP <- data2
+
+
+embryo.anchors <- FindIntegrationAnchors(object.list = embryo.list, dims = 1:30)
+embryo.integrated <- IntegrateData(anchorset = embryo.anchors, dims = 1:30)
+DefaultAssay(embryo.integrated) <- "integrated"
+# Run the standard workflow for visualization and clustering
+embryo.integrated <- ScaleData(embryo.integrated, verbose = FALSE)
+embryo.integrated <- RunPCA(embryo.integrated, npcs = 30, verbose = FALSE)
+embryo.integrated <- RunUMAP(embryo.integrated, reduction = "pca", dims = 1:30, verbose = FALSE)
+p1 <- DimPlot(embryo.integrated, reduction = "umap")
+p2 <- DimPlot(embryo.integrated, reduction = "umap", group.by = "dataset", label = TRUE, repel = TRUE) +
+    NoLegend()
+p1 + p2
+
+
+embryo.query <- embryo.list$OUR_GROUP
+embryo.anchors <- FindTransferAnchors(reference = embryo.integrated, query = embryo.query,
+    dims = 1:30, reference.reduction = "pca")
+predictions <- TransferData(anchorset = embryo.anchors, refdata = embryo.integrated$dataset,
+    dims = 1:30)
+embryo.query <- AddMetaData(embryo.query, metadata = predictions)
+
+embryo.query$prediction.match <- embryo.query$predicted.id == embryo.query$dataset
+table(embryo.query$prediction.match)
+
+table(embryo.query$predicted.id)
+```
+

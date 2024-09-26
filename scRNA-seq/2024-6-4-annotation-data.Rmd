@@ -1,0 +1,69 @@
+---
+title: "Untitled"
+author: "Xi Luo"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+suppressMessages({
+  library(Seurat)
+  library(patchwork)
+  library(Polychrome)
+  library(ggplot2)
+  library(cowplot)
+  library(patchwork)
+})
+```
+
+```{r}
+data1 <- readRDS("data/embryo_integrated_allembryos_filtered_0517.Rdata")
+# reference_data <- subset(data1, Age == "11")
+data1$dataset <- "nc_data"
+
+data2 <- readRDS("data/2024-9-10-filtered-data.Rdata")
+data2$dataset <- "our_data"
+```
+
+```{r}
+DimPlot(data2, reduction = "umap", group.by = "seurat_clusters", label = TRUE, repel = TRUE) +
+  ggtitle("UMAP of Data2") +
+  theme_minimal()
+```
+
+```{r}
+# Step 2: 查找锚点
+anchors <- FindTransferAnchors(reference = data1, query = data2, dims = 1:30)
+
+# Step 3: 转移注释
+predictions <- TransferData(anchorset = anchors, refdata = Idents(data1), dims = 1:30)
+
+# Step 4: 将预测结果添加到 data2
+data2 <- AddMetaData(data2, metadata = predictions)
+```
+
+```{r}
+# Step 1: 运行UMAP
+data2 <- RunUMAP(data2, dims = 1:30)
+
+# Step 2: 可视化
+DimPlot(data2, reduction = "umap", group.by = "predicted.id", label = TRUE, repel = TRUE) +
+  ggtitle("UMAP of Annotated Data2") +
+  theme_minimal()
+
+table(data2$predicted.id)
+```
+
+```{r}
+DimPlot(data1, reduction = "umap", label = TRUE, repel = TRUE) +
+  ggtitle("UMAP of Annotated Data1") +
+  theme_minimal()
+```

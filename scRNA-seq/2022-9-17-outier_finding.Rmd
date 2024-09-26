@@ -1,0 +1,101 @@
+title: "human_embryo_outlier_finding"
+author: "Xi Luo"
+date: "2022-09-17"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+
+#THE VERY BEGINNING OF WHAT YOU SHOULD DO ,WHEN YOU GET 1ST HAND OF SINGLE CELL DATA
+#REALLY THE FIRST 2024-03-04
+library(dplyr)
+library(Seurat)
+library(Matrix)
+library(gdata)
+library(ggplot2)
+setwd("C:/Users/luoxi/Desktop")
+
+plateB_data <- Read10X(data.dir = 'C:/Users/luoxi/Desktop/plateB')
+plateA_data <- Read10X(data.dir = 'C:/Users/luoxi/Desktop/plateA')
+dim(plateA_data)
+object.size(plateA_data)
+object.size(as.matrix(plateA_data))
+counts_per_cell_A <- Matrix::colSums(plateA_data)
+counts_per_gene_A <- Matrix::rowSums(plateA_data)
+genes_per_cell_A <- Matrix::colSums(plateA_data>0)
+
+dim(plateB_data)
+object.size(plateB_data)
+object.size(as.matrix(plateB_data))
+counts_per_cell_B <- Matrix::colSums(plateB_data)
+counts_per_gene_B <- Matrix::rowSums(plateB_data)
+genes_per_cell_B <- Matrix::colSums(plateB_data>0)
+
+```
+
+```{r counts_per_cell}
+hist(log10(counts_per_cell_B+1),main='counts per cell',col='cadetblue1',xlab = "log10(counts_per_cell)",xlim = range(1,5),ylim = range(0:10),breaks = 20)
+hist(log10(counts_per_cell_A+1),main='counts per cell',col='burlywood1',add = TRUE,xlim = range(1:5),ylim = range(0:10),breaks = 30)
+legend("top",legend=c("PlateA","  PlateB"), ncol=2,cex=0.8,bty="n",col=c("burlywood1","cadetblue1"),lty=5,lwd=10)
+
+```
+
+```{r genes_per_cell}
+hist(log10(genes_per_cell_B+1),main='genes per cell',col='cadetblue1',xlab = "log10(genes_per_cell)",xlim = range(1,4),ylim = range(0:15),breaks = 10)
+hist(log10(genes_per_cell_A+1),main='genes per cell',col='burlywood1',add = TRUE,xlim = range(1:4),ylim = range(0:15),breaks = 20)
+legend("top",legend=c("PlateA","  PlateB"), ncol=2,cex=0.8,bty="n",col=c("burlywood1","cadetblue1"),lty=5,lwd=10)
+```
+
+```{r counts_per_gene} 
+hist(log10(counts_per_gene_B+1),main='counts per gene',col='cadetblue1',xlab = "log10(counts_per_gene)",xlim = range(1,4),ylim = range(0:1000),breaks = 50)
+hist(log10(counts_per_gene_A+1),col='burlywood1',add = TRUE,xlim = range(1:4),ylim = range(0:1000),breaks = 30)
+legend("top",legend=c("PlateA","PlateB"), ncol=2,cex=0.8,bty="n",col=c("burlywood1","cadetblue1"),lty=5,lwd=10)
+```
+
+```{r counts_per_cell~genes_per_cell}
+newdata = data.frame(counts_per_cell_B,genes_per_cell_B)
+newdata1 = data.frame(counts_per_cell_A,genes_per_cell_A)
+
+#ggplot(data = newdata,aes(x = sort(counts_per_cell_B),y = sort(genes_per_cell_B)))+ 
+# geom_point(size = 2.5,colour = "burlywood1")
+  
+
+colnames(newdata1) <- c('counts_per_cell','genes_per_cell')
+colnames(newdata1)
+colnames(newdata) <- c('counts_per_cell','genes_per_cell')
+colnames(newdata)
+
+ggplot(df,aes(x = counts_per_cell,y = genes_per_cell , color = group))+ 
+  geom_point(size = 2.5)+#    red dots means plateA
+  ylim(0,10000)+
+  scale_fill_manual(labels = c("PlateB","PlateA"))+
+  ggtitle('counts_per_cell~genes_per_cell')+
+  theme(plot.title = element_text(hjust = 0.5,size = 16,family = 'serif'),)
+
+```
+
+```{r genes_per_cell}
+x <- c(1:74)
+df1 <-data.frame(x,genes_per_cell_A)
+y <- c(1:44)
+df2<- data.frame(y,genes_per_cell_B)
+colnames(df1)<-c('cells','genes_per_cell')
+colnames(df2)<-c('cells','genes_per_cell')
+dataf<-rbind(df1,df2)
+
+dataf
+ggplot(dataf,aes(x = cells,y = genes_per_cell,color =group ))+ 
+  geom_point(size = 2.5)+
+  ggtitle('genes_per_cell')+
+  theme(plot.title = element_text(hjust = 0.5,size = 16,family = 'serif'))
+```
+
+```{r}
+newdata$group <- 'PlateB'
+newdata1$group <- 'PlateA'
+df <- rbind(newdata , newdata1)
+df1$group <-'PlateA'
+df2$group<-'PlateB'
+```
