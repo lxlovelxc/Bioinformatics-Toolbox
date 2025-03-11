@@ -1,0 +1,67 @@
+# 加载必要的R包
+library(DOSE)
+library(enrichplot)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(msigdbr)
+
+# 1. 读取数据
+# 你可以根据需要选择不同的输入文件，这里使用你提供的最新文件
+c0 <- read.csv("2024-9-18-cluster1_filter_nfeature_525_tbl.csv", sep = "")
+
+# 2. 将基因符号转换为Entrez ID
+gene_list <- bitr(c0$gene, 
+                  fromType = "SYMBOL",
+                  toType = "ENTREZID",
+                  OrgDb = org.Hs.eg.db)
+
+# 合并数据并按log2FoldChange排序
+gene_list <- merge(gene_list, c0, by.x = "SYMBOL", by.y = "gene")
+gene_list <- gene_list[order(gene_list$log2FoldChange, decreasing = TRUE), ] # 按log2FC从高到低排序
+gene_list <- na.omit(gene_list) # 移除缺失值
+
+# 创建一个命名的向量，用于GSEA分析
+gene_list_vector <- gene_list$log2FoldChange
+names(gene_list_vector) <- gene_list$ENTREZID
+gene_list_vector <- sort(gene_list_vector, decreasing = TRUE)
+
+# 3. 加载MSigDB的Hallmark基因集
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, entrez_gene) # 使用Entrez ID匹配
+
+# 4. 运行GSEA分析（使用Hallmark基因集）
+gsea_hallmark <- GSEA(
+  geneList = gene_list_vector,        # 排序后的基因列表
+  TERM2GENE = hallmark_sets,          # Hallmark基因集
+  pvalueCutoff = 0.2,                 # p值阈值（与你的代码保持一致）
+  pAdjustMethod = "BH",               # 多重检验校正方法
+  minGSSize = 10,                     # 基因集最小基因数
+  maxGSSize = 2000,                   # 基因集最大基因数（与你的代码一致）
+  verbose = FALSE,                    # 不显示详细日志
+  seed = 123                          # 设置随机种子以确保可重复性
+)
+
+# 5. 可视化结果
+# (1) 绘制单个通路的GSEA富集图（前1个通路）
+if (nrow(gsea_hallmark) > 0) {
+  gseaplot2(gsea_hallmark, 
+            geneSetID = gsea_hallmark$ID[1], 
+            title = gsea_hallmark$Description[1])
+} else {
+  message("No significant Hallmark pathways enriched.")
+}
+
+# (2) 绘制Hallmark通路的点图
+dotplot(gsea_hallmark, 
+        showCategory = 10, 
+        orderBy = "NES",
+        title = "GSEA Hallmark Pathways")
+
+# (3) 绘制Hallmark富集得分的山脊图
+ridgeplot(gsea_hallmark, 
+          showCategory = 10) + 
+  ggtitle("GSEA Hallmark Pathways")
+
+# 6. 保存结果（可选）
+# 保存GSEA结果到CSV文件
+write.csv(as.data.frame(gsea_hallmark), "GSEA_Hallmark_results.csv", row.names = FALSE)
